@@ -14,10 +14,10 @@ from data import make_datasets
 
 from kmeans import KMeansAlgo
 from minibatch_kmeans import MiniBatchKMeansAlgo
-from charikar_facility import Charikar_Facility
 from ailon_coreset import Ailon_Coreset
 from boutsidis_streaming import Boutsidis_Streaming
 from guha_stream import Guha_Stream_KMeans
+from charikar_streaming import Charikar_KMeans
 
 
 # ============================================================
@@ -52,13 +52,13 @@ def build_algos(k: int, eps_boutsidis: float):
     """
     algos = [
         KMeansAlgo(max_iter=200),  # baseline
-        MiniBatchKMeansAlgo(batch_size=4096, max_iter=100),
+        MiniBatchKMeansAlgo(batch_size=8192, max_iter=100),
         Guha_Stream_KMeans(chunk_size=8192, m_factor=2.0),
         Ailon_Coreset(chunk_size=8192),
         Boutsidis_Streaming(eps=eps_boutsidis, c2=8.0, chunk_size=1024),
     ]
     if ENABLE_CHARIKAR_16:
-        algos.append(Charikar_Facility(init_facility=2.0, max_centers_factor=10.0))
+        algos.append(Charikar_KMeans(beta=25, gamma=100.0, chunk_size=8192))
     return algos
 
 

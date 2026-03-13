@@ -86,21 +86,17 @@ class Charikar_KMeans(Algo):
     - number of parallel runs is fixed to ceil(2 * log n), following the paper's structure
     """
 
-    name = "[16]CharikarInspired_PLS_KMeans_ChunkLoop"
+    name = "[16]Charikar_KMeans"
 
     def __init__(
         self,
         beta: float = 25.0,
         gamma: float = 100.0,
         chunk_size: int = 1000,
-        n_init_final: int = 5,
-        max_iter_final: int = 300,
     ):
         self.beta = float(beta)
         self.gamma = float(gamma)
         self.chunk_size = int(chunk_size)
-        self.n_init_final = int(n_init_final)
-        self.max_iter_final = int(max_iter_final)
 
     def _set_lb_kmeans(self, X: np.ndarray, k: int) -> float:
         """
@@ -321,8 +317,6 @@ class Charikar_KMeans(Algo):
                 Wsum,
                 k=k,
                 rng=rng,
-                n_init=self.n_init_final,
-                max_iter=self.max_iter_final,
             )
         elif Csum.shape[0] == k:
             centers_final = Csum.copy()
