@@ -1,13 +1,17 @@
 from __future__ import annotations
 import os
 import json
+
+import matplotlib
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from sklearn.datasets import make_blobs
 
-from charikar_facility import Charikar_Facility
+from charikar_updated import Charikar_Facility_PhasedKMeans
 from tuned_utils import extract_quality, pick_best_overall
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 
 def tune_charikar_parameters(
@@ -15,66 +19,95 @@ def tune_charikar_parameters(
     k: int,
     output_dir: str,
     labels=None,
-    init_facility_values=(0.25, 0.5, 1.0),
-    max_centers_factor_values=(4.0, 8.0, 12.0),
+    init_facility_values=(0.25, 0.5, 1.0, 2.0),
+    phase_centers_factor_values=(8.0, 12.0, 16.0),
+    compress_to_factor_values=(3.0, 4.0, 6.0),
+    growth_factor_values=(1.5, 2.0, 3.0),
     seeds=(42, 77, 211),
     quality_weight: float = 0.5,
     runtime_weight: float = 0.25,
     memory_weight: float = 0.25,
-) -> dict:
+):
     """
-    Run Charikar_Facility on a parameter grid, aggregate across seeds,
-    rank combinations by tradeoff score, save outputs to output_dir,
-    and return ONLY the best parameter combination as a dict.
-    """
+    Runs Charikar_Facility_PhasedKMeans for every parameter combination,
+    aggregates metrics across seeds, ranks them by one overall score,
+    saves CSVs and graphs, and returns the single best overall combination.
 
+    Saved files in output_dir:
+      - charikar_all_results.csv
+      - charikar_aggregated_results.csv
+      - charikar_scored_results.csv
+      - charikar_best_overall.csv
+      - best_overall.json
+      - memory_vs_quality.png
+      - runtime_vs_quality.png
+    """
     os.makedirs(output_dir, exist_ok=True)
+
     rows = []
 
     for init_facility in init_facility_values:
-        for max_centers_factor in max_centers_factor_values:
-            for seed in seeds:
-                rng = np.random.default_rng(seed)
+        for phase_centers_factor in phase_centers_factor_values:
+            for compress_to_factor in compress_to_factor_values:
+                for growth_factor in growth_factor_values:
+                    for seed in seeds:
+                        rng = np.random.default_rng(seed)
 
-                algo = Charikar_Facility(
-                    init_facility=init_facility,
-                    max_centers_factor=max_centers_factor,
-                )
+                        algo = Charikar_Facility_PhasedKMeans(
+                            init_facility=init_facility,
+                            phase_centers_factor=phase_centers_factor,
+                            compress_to_factor=compress_to_factor,
+                            growth_factor=growth_factor,
+                        )
 
-                result = algo.fit(
-                    samples,
-                    k,
-                    rng,
-                    labels,
-                )
+                        result = algo.fit(X=samples, k=k, rng=rng, y=labels)
+                        quality = extract_quality(result)
+                        extra = result.extra or {}
 
-                quality = extract_quality(result)
-                extra = result.extra or {}
-
-                rows.append(
-                    {
-                        "seed": int(seed),
-                        "init_facility": float(init_facility),
-                        "max_centers_factor": float(max_centers_factor),
-                        "runtime_sec": float(result.runtime_sec),
-                        "memory": float(result.memory),
-                        "memory_mb": float(result.memory / (1024.0 ** 2)),
-                        "cost_sse": float(result.cost_sse),
-                        "ari": None if result.ari is None else float(result.ari),
-                        "nmi": None if result.nmi is None else float(result.nmi),
-                        "quality": float(quality),
-                        "opened_centers": int(extra.get("opened_centers", -1)),
-                        "facility_final": float(extra.get("facility_final", np.nan)),
-                        "points_seen": int(extra.get("points_seen", -1)),
-                        "avg_update_ms": float(extra.get("avg_update_ms", np.nan)),
-                    }
-                )
+                        rows.append(
+                            {
+                                "seed": int(seed),
+                                "init_facility": float(init_facility),
+                                "phase_centers_factor": float(phase_centers_factor),
+                                "compress_to_factor": float(compress_to_factor),
+                                "growth_factor": float(growth_factor),
+                                "runtime_sec": float(result.runtime_sec),
+                                "memory": float(result.memory),
+                                "cost_sse": float(result.cost_sse),
+                                "ari": None if result.ari is None else float(result.ari),
+                                "nmi": None if result.nmi is None else float(result.nmi),
+                                "quality": float(quality),
+                                "points_seen": (
+                                    int(result.points_seen)
+                                    if result.points_seen is not None
+                                    else int(extra.get("points_seen", -1))
+                                ),
+                                "opened_centers_final_state": int(
+                                    extra.get("opened_centers_final_state", -1)
+                                ),
+                                "facility_final": float(extra.get("facility_final", np.nan)),
+                                "avg_update_ms": float(extra.get("avg_update_ms", np.nan)),
+                                "num_phases": int(extra.get("num_phases", -1)),
+                                "num_compressions": int(extra.get("num_compressions", -1)),
+                                "total_opened_events": int(extra.get("total_opened_events", -1)),
+                                "phase_max_centers": int(extra.get("phase_max_centers", -1)),
+                                "compress_target": int(extra.get("compress_target", -1)),
+                            }
+                        )
 
     df_all = pd.DataFrame(rows)
     df_all.to_csv(os.path.join(output_dir, "charikar_all_results.csv"), index=False)
 
     agg = (
-        df_all.groupby(["init_facility", "max_centers_factor"], as_index=False)
+        df_all.groupby(
+            [
+                "init_facility",
+                "phase_centers_factor",
+                "compress_to_factor",
+                "growth_factor",
+            ],
+            as_index=False,
+        )
         .agg(
             runtime_sec_mean=("runtime_sec", "mean"),
             runtime_sec_std=("runtime_sec", "std"),
@@ -86,12 +119,18 @@ def tune_charikar_parameters(
             quality_std=("quality", "std"),
             ari_mean=("ari", "mean"),
             nmi_mean=("nmi", "mean"),
-            opened_centers_mean=("opened_centers", "mean"),
+            points_seen_mean=("points_seen", "mean"),
+            opened_centers_final_state_mean=("opened_centers_final_state", "mean"),
             facility_final_mean=("facility_final", "mean"),
+            avg_update_ms_mean=("avg_update_ms", "mean"),
+            num_phases_mean=("num_phases", "mean"),
+            num_compressions_mean=("num_compressions", "mean"),
+            total_opened_events_mean=("total_opened_events", "mean"),
+            phase_max_centers_mean=("phase_max_centers", "mean"),
+            compress_target_mean=("compress_target", "mean"),
         )
         .reset_index(drop=True)
     )
-    agg["memory_mb_mean"] = agg["memory_mean"] / (1024.0 ** 2)
 
     agg.to_csv(os.path.join(output_dir, "charikar_aggregated_results.csv"), index=False)
 
@@ -108,47 +147,36 @@ def tune_charikar_parameters(
     scored_df.to_csv(os.path.join(output_dir, "charikar_scored_results.csv"), index=False)
     best_one_df.to_csv(os.path.join(output_dir, "charikar_best_overall.csv"), index=False)
 
+    with open(os.path.join(output_dir, "best_overall.json"), "w", encoding="utf-8") as f:
+        json.dump(best_one_df.to_dict(orient="records"), f, indent=2)
+
     best_row = best_one_df.iloc[0]
 
-    best_result = {
-        "init_facility": float(best_row["init_facility"]),
-        "max_centers_factor": float(best_row["max_centers_factor"]),
-        "tradeoff_score": float(best_row["tradeoff_score"]),
-        "quality_mean": float(best_row["quality_mean"]),
-        "runtime_sec_mean": float(best_row["runtime_sec_mean"]),
-        "memory_mean": float(best_row["memory_mean"]),
-        "memory_mb_mean": float(best_row["memory_mb_mean"]),
-        "cost_sse_mean": float(best_row["cost_sse_mean"]),
-        "ari_mean": None if pd.isna(best_row["ari_mean"]) else float(best_row["ari_mean"]),
-        "nmi_mean": None if pd.isna(best_row["nmi_mean"]) else float(best_row["nmi_mean"]),
-        "opened_centers_mean": float(best_row["opened_centers_mean"]),
-        "facility_final_mean": float(best_row["facility_final_mean"]),
-    }
-
-    with open(os.path.join(output_dir, "best_overall.json"), "w", encoding="utf-8") as f:
-        json.dump(best_result, f, indent=2)
-
-    # Memory vs Quality
     plt.figure(figsize=(8, 6))
-    plt.scatter(scored_df["memory_mb_mean"], scored_df["quality_mean"])
+    plt.scatter(scored_df["memory_mean"], scored_df["quality_mean"])
     plt.scatter(
-        [best_row["memory_mb_mean"]],
+        [best_row["memory_mean"]],
         [best_row["quality_mean"]],
         marker="x",
         s=120,
     )
     plt.annotate(
-        f"BEST f0={best_row['init_facility']}, mcf={best_row['max_centers_factor']}",
-        (best_row["memory_mb_mean"], best_row["quality_mean"]),
+        (
+            "BEST "
+            f"f0={best_row['init_facility']}, "
+            f"phase={best_row['phase_centers_factor']}, "
+            f"cmp={best_row['compress_to_factor']}, "
+            f"grow={best_row['growth_factor']}"
+        ),
+        (best_row["memory_mean"], best_row["quality_mean"]),
     )
-    plt.xlabel("Memory usage (MB, mean)")
+    plt.xlabel("Memory usage (bytes, mean)")
     plt.ylabel("Quality (mean)")
     plt.title("Charikar tuning: Memory usage vs Quality")
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "memory_vs_quality.png"), dpi=150)
     plt.close()
 
-    # Runtime vs Quality
     plt.figure(figsize=(8, 6))
     plt.scatter(scored_df["runtime_sec_mean"], scored_df["quality_mean"])
     plt.scatter(
@@ -158,7 +186,13 @@ def tune_charikar_parameters(
         s=120,
     )
     plt.annotate(
-        f"BEST f0={best_row['init_facility']}, mcf={best_row['max_centers_factor']}",
+        (
+            "BEST "
+            f"f0={best_row['init_facility']}, "
+            f"phase={best_row['phase_centers_factor']}, "
+            f"cmp={best_row['compress_to_factor']}, "
+            f"grow={best_row['growth_factor']}"
+        ),
         (best_row["runtime_sec_mean"], best_row["quality_mean"]),
     )
     plt.xlabel("Runtime (sec, mean)")
@@ -168,27 +202,29 @@ def tune_charikar_parameters(
     plt.savefig(os.path.join(output_dir, "runtime_vs_quality.png"), dpi=150)
     plt.close()
 
-    return best_result
+    return best_one_df
 
 
 def main():
     X, y = make_blobs(
         n_samples=10000,
         centers=8,
-        n_features=10,
+        n_features=20,
         cluster_std=2.0,
         random_state=42,
     )
 
-    X = X.astype(np.float32)
+    X = X.astype("float32")
 
-    best_result = tune_charikar_parameters(
+    best_df = tune_charikar_parameters(
         samples=X,
         k=8,
         output_dir="output/charikar_blobs",
         labels=y,
-        init_facility_values=(0.25, 0.5, 1.0, 2.0, 4.0),
-        max_centers_factor_values=(4.0, 8.0, 12.0, 16.0, 24.0),
+        init_facility_values=(0.5, 1.0, 2.0),
+        phase_centers_factor_values=(8.0, 12.0),
+        compress_to_factor_values=(4.0, 6.0),
+        growth_factor_values=(1.5, 2.0),
         seeds=(42, 77, 211),
         quality_weight=0.5,
         runtime_weight=0.25,
@@ -196,7 +232,7 @@ def main():
     )
 
     print("Best overall parameter combination:")
-    print(best_result)
+    print(best_df)
 
 
 if __name__ == "__main__":

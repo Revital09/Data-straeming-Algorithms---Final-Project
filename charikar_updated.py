@@ -1,6 +1,5 @@
 from __future__ import annotations
 import time
-import math
 import numpy as np
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
@@ -13,19 +12,10 @@ class Charikar_Facility_PhasedKMeans(Algo):
     Phased streaming facility-opening heuristic inspired by Charikar,
     adapted to Euclidean k-means with weighted k-means compression.
 
-    Main idea:
-    - Process the stream in one pass.
-    - Maintain a weighted set of currently opened centers.
-    - Open a new center for x with probability min(1, d^2 / f).
-    - If the current phase accumulates too many centers, end the phase:
-        * compress centers via weighted k-means
-        * increase facility cost
-        * continue to next phase
-    - Final weighted k-means reduction to exactly k centers.
-
     Notes:
-    - This is a practical phased k-means adaptation, not a faithful
-      reproduction of the Charikar et al. 2003 k-median algorithm.
+    - This is a practical phased k-means adaptation.
+    - It is not a faithful implementation of Charikar et al. (2003),
+      which is for streaming k-median.
     """
 
     name = "[16]Charikar2003_PhasedFacilityKMeans"
@@ -57,10 +47,6 @@ class Charikar_Facility_PhasedKMeans(Algo):
         target: int,
         rng: np.random.Generator,
     ) -> tuple[list[np.ndarray], list[float]]:
-        """
-        Compress current weighted centers to 'target' representatives
-        using weighted k-means, then aggregate weights.
-        """
         if len(centers) <= target:
             return centers, counts
 
@@ -93,13 +79,9 @@ class Charikar_Facility_PhasedKMeans(Algo):
         if k <= 0:
             raise ValueError("k must be positive.")
 
-        # Threshold for ending a phase
         phase_max_centers = max(int(self.phase_centers_factor * k), k + 5)
-
-        # Target after compression at end of each phase
         compress_target = max(k, int(self.compress_to_factor * k))
 
-        # Initialize with one random point
         idx0 = int(rng.integers(0, n))
         centers: list[np.ndarray] = [X[idx0].copy()]
         counts: list[float] = [1.0]
@@ -111,20 +93,17 @@ class Charikar_Facility_PhasedKMeans(Algo):
         phase_points = 0
         total_opened_events = 1
         num_compressions = 0
-
-        # Optional statistics
         phase_summaries: list[dict] = []
 
         for i in range(n):
             x = X[i]
             phase_points += 1
 
-            C = np.vstack(centers)  # small enough in streaming summary state
+            C = np.vstack(centers)
             sq_dists = np.sum((C - x) ** 2, axis=1)
             j_near = int(np.argmin(sq_dists))
             d2 = float(sq_dists[j_near])
 
-            # Facility-style opening rule adapted to k-means
             p_open = min(1.0, d2 / (facility_cost + 1e-12))
 
             if rng.random() < p_open:
@@ -134,7 +113,6 @@ class Charikar_Facility_PhasedKMeans(Algo):
             else:
                 counts[j_near] += 1.0
 
-            # End current phase if too many centers accumulated
             if len(centers) > phase_max_centers:
                 before = len(centers)
 
@@ -160,13 +138,11 @@ class Charikar_Facility_PhasedKMeans(Algo):
                     }
                 )
 
-                # Move to next phase
                 facility_cost *= self.growth_factor
                 phase_id += 1
                 phase_start_idx = i + 1
                 phase_points = 0
 
-        # If the last phase ended naturally, record it too
         phase_summaries.append(
             {
                 "phase": phase_id,
@@ -179,7 +155,6 @@ class Charikar_Facility_PhasedKMeans(Algo):
             }
         )
 
-        # Final reduction to exactly k centers
         Cmat = np.vstack(centers).astype(np.float64, copy=False)
         w = np.asarray(counts, dtype=np.float64)
 
@@ -192,14 +167,11 @@ class Charikar_Facility_PhasedKMeans(Algo):
                 n_init=self.n_init_final,
                 max_iter=self.max_iter_final,
             )
+        elif Cmat.shape[0] == k:
+            centers_final = Cmat.copy()
         else:
-            # If fewer than k centers remain, pad by reusing available centers
-            # so downstream code does not break.
-            if Cmat.shape[0] == k:
-                centers_final = Cmat.copy()
-            else:
-                extra_idx = rng.integers(0, Cmat.shape[0], size=k - Cmat.shape[0])
-                centers_final = np.vstack([Cmat, Cmat[extra_idx]])
+            extra_idx = rng.integers(0, Cmat.shape[0], size=k - Cmat.shape[0])
+            centers_final = np.vstack([Cmat, Cmat[extra_idx]])
 
         t1 = time.perf_counter()
 
@@ -210,21 +182,21 @@ class Charikar_Facility_PhasedKMeans(Algo):
         nmi = normalized_mutual_info_score(y, pred) if y is not None else None
 
         avg_update_ms = float((t1 - t0) * 1000.0 / max(1, n))
-        state_bytes = int(Cmat.nbytes + w.nbytes)
+        memory = float(Cmat.nbytes + w.nbytes)
 
         return Result(
             centers=centers_final,
             runtime_sec=float(t1 - t0),
+            memory=memory,
             cost_sse=cost,
             cost_ratio_vs_kmeans=float("nan"),
             ari=ari,
             nmi=nmi,
+            points_seen=int(n),
             extra={
                 "opened_centers_final_state": int(Cmat.shape[0]),
                 "facility_final": float(facility_cost),
-                "points_seen": int(n),
                 "avg_update_ms": float(avg_update_ms),
-                "state_bytes": int(state_bytes),
                 "num_phases": int(phase_id),
                 "num_compressions": int(num_compressions),
                 "total_opened_events": int(total_opened_events),
