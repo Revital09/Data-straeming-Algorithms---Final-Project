@@ -19,6 +19,11 @@ class _WeightedPoint:
 
 
 class _OnlineFLKMeansState:
+    """
+    One ONLINE-FL-style run, adapted to k-means:
+    - opening probability uses squared distance
+    - service cost accumulates weighted squared distance
+    """
     def __init__(self, facility_cost: float):
         self.facility_cost = float(facility_cost)
         self.centers: List[np.ndarray] = []
@@ -48,6 +53,7 @@ class _OnlineFLKMeansState:
         j = int(np.argmin(sq_dists))
         d2 = float(sq_dists[j])
 
+        # k-means adaptation of the paper's facility-opening idea
         p_open = min(1.0, (w * d2) / (self.facility_cost + 1e-12))
 
         if rng.random() < p_open:
@@ -70,65 +76,47 @@ class _OnlineFLKMeansState:
         return C, w
 
 
-class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
+class Charikar_KMeans(Algo):
+    """
+    Charikar-inspired PLS skeleton adapted to k-means.
+
+    Compared to the earlier version:
+    - no extra summary reduction after each phase
+    - Mi is exactly the winner's weighted centers
+    - number of parallel runs is fixed to ceil(2 * log n), following the paper's structure
+    """
+
     name = "[16]CharikarInspired_PLS_KMeans_ChunkLoop"
 
     def __init__(
         self,
         beta: float = 25.0,
         gamma: float = 100.0,
-        parallel_runs_factor: float = 2.0,
-        summary_reduce_factor: float = 1.0,
         chunk_size: int = 1000,
-        n_init_phase: int = 3,
-        max_iter_phase: int = 80,
         n_init_final: int = 5,
-        max_iter_final: int = 200,
+        max_iter_final: int = 300,
     ):
         self.beta = float(beta)
         self.gamma = float(gamma)
-        self.parallel_runs_factor = float(parallel_runs_factor)
-        self.summary_reduce_factor = float(summary_reduce_factor)
         self.chunk_size = int(chunk_size)
-        self.n_init_phase = int(n_init_phase)
-        self.max_iter_phase = int(max_iter_phase)
         self.n_init_final = int(n_init_final)
         self.max_iter_final = int(max_iter_final)
 
     def _set_lb_kmeans(self, X: np.ndarray, k: int) -> float:
+        """
+        PLS-style lower bound initialization adapted to k-means:
+        use the minimum squared pairwise distance among the first k+1 points.
+        """
         m = min(X.shape[0], k + 1)
         if m <= 1:
             return 1.0
+
         Y = X[:m].astype(np.float64, copy=False)
         diff = Y[:, None, :] - Y[None, :, :]
         d2 = np.sum(diff * diff, axis=2)
         np.fill_diagonal(d2, np.inf)
         lb = float(np.min(d2))
         return max(lb, 1e-12)
-
-    def _compress_summary_if_needed(
-        self,
-        centers: np.ndarray,
-        weights: np.ndarray,
-        k: int,
-        rng: np.random.Generator,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        target = max(k, int(math.ceil(self.summary_reduce_factor * k)))
-        if centers.shape[0] <= target:
-            return centers, weights
-
-        Cnew = weighted_kmeans_centers(
-            centers,
-            weights,
-            k=target,
-            rng=rng,
-            n_init=self.n_init_phase,
-            max_iter=self.max_iter_phase,
-        )
-        lab = assign_labels(centers, Cnew)
-        wnew = np.zeros(Cnew.shape[0], dtype=np.float64)
-        np.add.at(wnew, lab, weights)
-        return Cnew, wnew
 
     def _init_phase_states(
         self,
@@ -138,7 +126,10 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
         rng: np.random.Generator,
     ):
         logn = max(1.0, math.log(max(2, n)))
-        num_runs = max(1, int(math.ceil(self.parallel_runs_factor * logn)))
+
+        # Paper-inspired: 2 log n parallel runs
+        num_runs = max(1, int(math.ceil(2.0 * logn)))
+
         facility_cost = Li / (k * (1.0 + logn) + 1e-12)
 
         median_limit = int(math.ceil(
@@ -162,11 +153,13 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
     ) -> None:
         for item in items:
             any_active = False
+
             for st, rrng in zip(states, run_rngs):
                 if st.stopped:
                     continue
                 any_active = True
 
+                # Save old state so we can revert the last overflowing point
                 prev_opened = st.num_opened
                 prev_cost = st.total_cost
                 prev_processed = st.processed_items
@@ -205,7 +198,7 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
             Li=Li, k=k, n=n, rng=rng
         )
 
-        # First feed carried summary once
+        # Feed the carried summary Mi from the previous phase
         if summary_points:
             self._feed_items_to_states(
                 states=states,
@@ -215,9 +208,10 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
                 cost_limit=cost_limit,
             )
 
-        # Then feed raw stream chunk by chunk
+        # Feed unread raw points chunk by chunk
         for start in range(raw_start_idx, n, self.chunk_size):
             stop = min(start + self.chunk_size, n)
+
             chunk_items = [
                 _WeightedPoint(x=X[i], w=1.0, is_raw=True)
                 for i in range(start, stop)
@@ -238,12 +232,15 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
             if not st.stopped:
                 st.stop_reason = "end_of_stream"
 
+        # Winner = run that progressed the farthest
         winner = max(states, key=lambda s: s.processed_items)
         Cw, Ww = winner.snapshot()
-        Cw, Ww = self._compress_summary_if_needed(Cw, Ww, k=k, rng=rng)
 
-        Mi = [_WeightedPoint(x=Cw[i].copy(), w=float(Ww[i]), is_raw=False)
-              for i in range(Cw.shape[0])]
+        # Paper-closer behavior: carry Mi directly, no extra compression
+        Mi = [
+            _WeightedPoint(x=Cw[i].copy(), w=float(Ww[i]), is_raw=False)
+            for i in range(Cw.shape[0])
+        ]
 
         stats = {
             "facility_cost": float(facility_cost),
@@ -269,7 +266,9 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
         if self.chunk_size <= 0:
             raise ValueError("chunk_size must be positive.")
 
+        # PLS-style lower bound initialization
         L = self._set_lb_kmeans(X, k) / self.beta
+
         raw_start_idx = 0
         phase_id = 1
         summary_points: list[_WeightedPoint] = []
@@ -301,8 +300,10 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
             summary_points = Mi
 
             if raw_consumed <= 0:
-                # avoid deadlock
-                summary_points.append(_WeightedPoint(x=X[raw_start_idx].copy(), w=1.0, is_raw=False))
+                # Safety against deadlock
+                summary_points.append(
+                    _WeightedPoint(x=X[raw_start_idx].copy(), w=1.0, is_raw=False)
+                )
                 raw_start_idx += 1
             else:
                 raw_start_idx += raw_consumed
@@ -313,6 +314,7 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
         Csum = np.vstack([p.x for p in summary_points]).astype(np.float64, copy=False)
         Wsum = np.asarray([p.w for p in summary_points], dtype=np.float64)
 
+        # Final weighted k-means reduction to exactly k centers
         if Csum.shape[0] > k:
             centers_final = weighted_kmeans_centers(
                 Csum,
@@ -325,6 +327,7 @@ class CharikarInspired_PLS_KMeans_ChunkLoop(Algo):
         elif Csum.shape[0] == k:
             centers_final = Csum.copy()
         else:
+            # Padding only for downstream compatibility
             extra_idx = rng.integers(0, Csum.shape[0], size=k - Csum.shape[0])
             centers_final = np.vstack([Csum, Csum[extra_idx]])
 
