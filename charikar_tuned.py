@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.datasets import make_blobs
 
-from charikar_updated import Charikar_Facility
+from charikar_facility import Charikar_Facility
 from tuned_utils import extract_quality, pick_best_overall
 
 
