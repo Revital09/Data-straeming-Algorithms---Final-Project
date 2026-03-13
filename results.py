@@ -12,6 +12,7 @@ class Result:
     cost_ratio_vs_kmeans: float
     ari: Optional[float] = None
     nmi: Optional[float] = None
+    points_seen: Optional[int] = None
     extra: Optional[Dict[str, Any]] = None
 
 class Algo:

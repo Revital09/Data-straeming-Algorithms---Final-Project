@@ -1,0 +1,14 @@
+{
+  "init_facility": 1.0,
+  "max_centers_factor": 4.0,
+  "tradeoff_score": -0.004166666666666667,
+  "quality_mean": 1.0,
+  "runtime_sec_mean": 0.7220737999999377,
+  "memory_mean": 1216.0,
+  "memory_mb_mean": 0.00115966796875,
+  "cost_sse_mean": 412986.9166666667,
+  "ari_mean": 1.0,
+  "nmi_mean": 1.0,
+  "opened_centers_mean": 25.333333333333332,
+  "facility_final_mean": 16384.0
+}
