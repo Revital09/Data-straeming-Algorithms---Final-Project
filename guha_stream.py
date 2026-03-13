@@ -94,6 +94,7 @@ class Guha_Stream_KMeans(Algo):
             return Result(
                 centers=np.empty((0, d), dtype=np.float64),
                 runtime_sec=0.0,
+                memory=0.0,
                 cost_sse=float("nan"),
                 cost_ratio_vs_kmeans=float("nan"),
                 ari=None,
@@ -182,6 +183,7 @@ class Guha_Stream_KMeans(Algo):
         return Result(
             centers=centers_final,
             runtime_sec=t1 - t0,
+            memory=float(state_bytes),
             cost_sse=cost,
             cost_ratio_vs_kmeans=float("nan"),
             ari=ari,
