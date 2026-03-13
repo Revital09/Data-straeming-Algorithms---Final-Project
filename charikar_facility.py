@@ -77,6 +77,7 @@ class Charikar_Facility(Algo):
         return Result(
             centers=centers_final,
             runtime_sec=t1 - t0,
+            memory=float(state_bytes),
             cost_sse=cost,
             cost_ratio_vs_kmeans=float("nan"),
             ari=ari,
@@ -86,6 +87,5 @@ class Charikar_Facility(Algo):
                 "facility_final": float(f),
                 "points_seen": int(n),
                 "avg_update_ms": float(avg_update_ms),
-                "state_bytes": int(state_bytes),
             },
         )

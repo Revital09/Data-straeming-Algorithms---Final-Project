@@ -145,13 +145,15 @@ def run_with_measurements(algo, X: np.ndarray, y: np.ndarray | None, k: int, rng
     res.extra["peak_mem_bytes"] = int(peak)
 
     # ensure points_seen exists for throughput
+    if getattr(res, "points_seen", None) is None:
+        res.points_seen = int(res.extra.get("points_seen", X.shape[0]))
     if "points_seen" not in res.extra:
-        res.extra["points_seen"] = int(X.shape[0])
+        res.extra["points_seen"] = int(res.points_seen)
 
     # throughput points/sec
     rt = float(res.runtime_sec) if res.runtime_sec is not None else float("nan")
     if np.isfinite(rt) and rt > 0:
-        res.extra["throughput_pts_per_sec"] = float(res.extra["points_seen"]) / rt
+        res.extra["throughput_pts_per_sec"] = float(res.points_seen) / rt
     else:
         res.extra["throughput_pts_per_sec"] = float("nan")
         print("error throuput is negative or inf")
@@ -205,6 +207,7 @@ def flatten_result(
         "stream_model": STREAM_MODEL,   # ✅ requirement 1
 
         "runtime_sec": safe_float(res.runtime_sec),
+        "memory": safe_float(res.memory),
         "cost_sse": safe_float(res.cost_sse),
         "cost_ratio_vs_kmeans": ratio,
         "quality_loss_pct_vs_kmeans": qloss_pct,

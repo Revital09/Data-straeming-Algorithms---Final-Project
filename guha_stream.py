@@ -22,7 +22,7 @@ class Guha_Stream_KMeans(Algo):
 
     We additionally measure:
       - avg_update_ms: average time to process one chunk (including summarization + merges)
-      - state_bytes: bytes of final stored summary (Xs, ws)
+      - memory: bytes of final stored summary (Xs, ws)
       - points_seen: number of points processed (should equal n)
     """
 
@@ -106,7 +106,6 @@ class Guha_Stream_KMeans(Algo):
                     "chunk_size": int(self.chunk_size),
                     "points_seen": 0,
                     "avg_update_ms": float("nan"),
-                    "state_bytes": 0,
                 },
             )
 
@@ -195,7 +194,6 @@ class Guha_Stream_KMeans(Algo):
                 "chunk_size": int(self.chunk_size),
                 "points_seen": int(points_seen),
                 "avg_update_ms": float(avg_update_ms),
-                "state_bytes": int(state_bytes),
                 "m_factor": float(self.m_factor),
             },
         )

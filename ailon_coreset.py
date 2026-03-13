@@ -193,6 +193,7 @@ class Ailon_Coreset(Algo):
         return Result(
             centers=centers_final,
             runtime_sec=t1 - t0,
+            memory=float(state_bytes),
             cost_sse=cost,
             cost_ratio_vs_kmeans=float("nan"),
             ari=ari,
@@ -202,7 +203,6 @@ class Ailon_Coreset(Algo):
                 "chunk_size": int(self.chunk_size),
                 "points_seen": int(points_seen),
                 "avg_update_ms": float(avg_update_ms),
-                "state_bytes": int(state_bytes),
                 "algorithm": "Ailon2009 faithful (no refinement)"
             }
         )

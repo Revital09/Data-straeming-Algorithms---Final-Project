@@ -16,14 +16,14 @@ def main():
     # Basic numeric
     df["quality_loss_pct"] = pd.to_numeric(df["quality_loss_pct_vs_kmeans"], errors="coerce")
     df["runtime_sec"] = pd.to_numeric(df["runtime_sec"], errors="coerce")
-    df["mem_bytes"] = pd.to_numeric(df.get("extra__state_bytes", np.nan), errors="coerce")
+    df["mem_bytes"] = pd.to_numeric(df.get("memory", np.nan), errors="coerce")
     df["peak_mem_bytes"] = pd.to_numeric(df.get("extra__peak_mem_bytes", np.nan), errors="coerce")
     df["throughput"] = pd.to_numeric(df.get("extra__throughput_pts_per_sec", np.nan), errors="coerce")
     df["eps"] = pd.to_numeric(df.get("extra__eps", np.nan), errors="coerce")
 
-    # Choose memory measure (state bytes preferred; fallback to peak)
-    df["memory_mb"] = df["mem_bytes"] / (1024**2)
-    df.loc[~np.isfinite(df["memory_mb"]), "memory_mb"] = df["peak_mem_bytes"] / (1024**2)
+    # Choose memory measure (Result.memory preferred; fallback to peak)
+    df["memory_bytes"] = df["mem_bytes"]
+    df.loc[~np.isfinite(df["memory_bytes"]), "memory_bytes"] = df["peak_mem_bytes"]
 
     # Filter finite rows
     base = df[np.isfinite(df["quality_loss_pct"]) & np.isfinite(df["runtime_sec"])].copy()
@@ -41,11 +41,11 @@ def main():
     plt.close()
 
     # 2) Quality vs Memory
-    base2 = base[np.isfinite(base["memory_mb"])].copy()
+    base2 = base[np.isfinite(base["memory_bytes"])].copy()
     plt.figure()
     for algo, sub in base2.groupby("algorithm"):
-        plt.scatter(sub["memory_mb"], sub["quality_loss_pct"], label=algo, alpha=0.6)
-    plt.xlabel("Memory (MB) [state_bytes preferred]")
+        plt.scatter(sub["memory_bytes"], sub["quality_loss_pct"], label=algo, alpha=0.6)
+    plt.xlabel("Memory (bytes) [Result.memory preferred]")
     plt.ylabel("Quality loss (%) vs KMeans")
     plt.title("Quality vs Memory (all runs)")
     plt.legend(fontsize=8, loc="best")
@@ -56,8 +56,8 @@ def main():
     # 3) Time vs Memory
     plt.figure()
     for algo, sub in base2.groupby("algorithm"):
-        plt.scatter(sub["memory_mb"], sub["runtime_sec"], label=algo, alpha=0.6)
-    plt.xlabel("Memory (MB) [state_bytes preferred]")
+        plt.scatter(sub["memory_bytes"], sub["runtime_sec"], label=algo, alpha=0.6)
+    plt.xlabel("Memory (bytes) [Result.memory preferred]")
     plt.ylabel("Runtime (sec)")
     plt.title("Time vs Memory (all runs)")
     plt.legend(fontsize=8, loc="best")
@@ -72,7 +72,7 @@ def main():
         agg = bout.groupby("eps").agg(
             quality_loss_mean=("quality_loss_pct", "mean"),
             runtime_mean=("runtime_sec", "mean"),
-            memory_mean=("memory_mb", "mean"),
+            memory_mean=("memory_bytes", "mean"),
             throughput_mean=("throughput", "mean"),
             count=("quality_loss_pct", "count")
         ).reset_index()
@@ -102,7 +102,7 @@ def main():
         plt.scatter(agg["memory_mean"], agg["quality_loss_mean"])
         for _, r in agg.iterrows():
             plt.annotate(f"eps={r['eps']:.2f}", (r["memory_mean"], r["quality_loss_mean"]))
-        plt.xlabel("Mean memory (MB)")
+        plt.xlabel("Mean memory (bytes)")
         plt.ylabel("Mean quality loss (%)")
         plt.title("Ablation: tradeoff by eps (Boutsidis)")
         plt.tight_layout()

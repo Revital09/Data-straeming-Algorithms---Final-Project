@@ -142,7 +142,6 @@ def tune_boutsidis_parameters(
                         "d": int(extra.get("d", -1)),
                         "points_seen": int(extra.get("points_seen", -1)),
                         "avg_update_ms": float(extra.get("avg_update_ms", np.nan)),
-                        "state_bytes": int(extra.get("state_bytes", -1)),
                         "cost_is_approx": bool(extra.get("cost_is_approx", False)),
                         "stream_is_single_pass": bool(extra.get("stream_is_single_pass", False)),
                     }
@@ -166,7 +165,6 @@ def tune_boutsidis_parameters(
             r_std=("r", "std"),
             avg_update_ms_mean=("avg_update_ms", "mean"),
             avg_update_ms_std=("avg_update_ms", "std"),
-            state_bytes_mean=("state_bytes", "mean"),
             points_seen_mean=("points_seen", "mean"),
             ari_mean=("ari", "mean"),
             nmi_mean=("nmi", "mean"),

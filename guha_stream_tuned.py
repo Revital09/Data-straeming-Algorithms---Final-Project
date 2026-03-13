@@ -137,7 +137,6 @@ def tune_guha_parameters(
                     "levels_used": int(extra.get("levels_used", -1)),
                     "points_seen": int(extra.get("points_seen", -1)),
                     "avg_update_ms": float(extra.get("avg_update_ms", np.nan)),
-                    "state_bytes": int(extra.get("state_bytes", -1)),
                 }
             )
 
@@ -161,7 +160,6 @@ def tune_guha_parameters(
             levels_used_mean=("levels_used", "mean"),
             avg_update_ms_mean=("avg_update_ms", "mean"),
             avg_update_ms_std=("avg_update_ms", "std"),
-            state_bytes_mean=("state_bytes", "mean"),
             points_seen_mean=("points_seen", "mean"),
             ari_mean=("ari", "mean"),
             nmi_mean=("nmi", "mean"),

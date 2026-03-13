@@ -239,7 +239,6 @@ class Boutsidis_Streaming(Algo):
                 "cost_is_approx": bool(cost_is_approx),
                 "stream_is_single_pass": bool(single_pass),
                 "avg_update_ms": float(avg_update_ms),
-                "state_bytes": int(state_bytes),
             },
         )
 
