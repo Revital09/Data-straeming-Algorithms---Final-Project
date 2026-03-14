@@ -11,7 +11,7 @@ import numpy as np
 
 from tuned_utils import tuned_algorithms
 from utils import set_seed
-from data import make_datasets
+from data_new import make_datasets
 
 from kmeans import KMeansAlgo
 from minibatch_kmeans import MiniBatchKMeansAlgo
