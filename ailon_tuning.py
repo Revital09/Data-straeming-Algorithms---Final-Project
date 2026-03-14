@@ -164,7 +164,7 @@ def main():
     best_df = tune_ailon_parameters(
         samples=X,
         k=8,
-        output_dir="output/ailon_blobs",
+        output_dir="output_algorithms/ailon/ailon_tuning",
         labels=y,
         coreset_factors=(1.0, 1.5, 2.0),
         repeat_factors=(0.75, 1.0, 1.5),

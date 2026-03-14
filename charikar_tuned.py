@@ -179,7 +179,7 @@ def main():
     best_df = tune_charikar_parameters(
         samples=X,
         k=8,
-        output_dir="output/charikar_blobs",
+        output_dir="output_algorithms/charikar/charikar_tuning",
         labels=y,
         chunk_size=4092,
         beta_values = (1.5, 3, 5),

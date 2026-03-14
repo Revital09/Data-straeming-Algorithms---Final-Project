@@ -1,0 +1,8 @@
+{
+  "prefix": "guha_stream_size",
+  "num_runs": 15,
+  "grouped_by": [
+    "n"
+  ],
+  "x_col": "n"
+}
