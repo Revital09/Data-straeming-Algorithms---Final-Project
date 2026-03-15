@@ -10,7 +10,7 @@ from charikar_streaming_new import Charikar_KMeans
 from guha_tuning import tune_guha_parameters
 from ailon_tuning import tune_ailon_parameters
 from boutsidis_tuning import tune_boutsidis_parameters
-from charikar_tuned import tune_charikar_parameters
+from charikar_tuning import tune_charikar_parameters
 from results import Algo
 from sklearn.datasets import make_blobs
 
