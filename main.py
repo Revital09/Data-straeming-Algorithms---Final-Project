@@ -4,7 +4,7 @@ import os
 import csv
 import itertools
 import tracemalloc
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Any
 
 import numpy as np
 
@@ -12,13 +12,6 @@ from results import Algo
 from tuned_utils import tuned_algorithms
 from utils import set_seed
 from data_new import make_datasets
-
-from kmeans import KMeansAlgo
-from minibatch_kmeans import MiniBatchKMeansAlgo
-from ailon_streaming import Ailon_Coreset
-from boutsidis_streaming import Boutsidis_Streaming
-from guha_streaming import Guha_Stream_KMeans
-from charikar_streaming import Charikar_KMeans
 
 
 OUTPUT_DIR = "results"

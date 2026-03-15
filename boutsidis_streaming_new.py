@@ -1,15 +1,15 @@
 from __future__ import annotations
-import time
+
 import math
+import time
 from dataclasses import dataclass
-from typing import Iterable, Iterator, Optional, Dict, Any, Tuple
+from typing import Any, Iterable, Iterator, Optional, Tuple
 
 import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from results import Algo, Result
-from utils import kmeans_cost_sse
 
 
 def _rademacher_projection_matrix(d: int, r: int, rng: np.random.Generator) -> np.ndarray:
@@ -69,17 +69,6 @@ class Boutsidis_Streaming(Algo):
         )
         return r, R, km, state
 
-    def _centers_from_state(self, d: int, k: int) -> np.ndarray:
-        assert self.state_ is not None
-        centers = np.zeros((k, d), dtype=np.float64)
-        for j in range(k):
-            c = int(self.state_.count[j])
-            if c > 0:
-                centers[j] = self.state_.sum_x[j] / float(c)
-            else:
-                centers[j] = 0.0
-        return centers
-
     @staticmethod
     def _is_single_pass_iterable(obj: Any) -> bool:
         """
@@ -93,41 +82,66 @@ class Boutsidis_Streaming(Algo):
         except TypeError:
             return True
 
-    def fit_batches(
+    @staticmethod
+    def _squared_norms(X: np.ndarray) -> np.ndarray:
+        return np.einsum("ij,ij->i", X, X, optimize=True)
+
+    @staticmethod
+    def _squared_distances(
+        X: np.ndarray,
+        X_sq_norms: np.ndarray,
+        centers: np.ndarray,
+    ) -> np.ndarray:
+        center_sq_norms = np.einsum("ij,ij->i", centers, centers, optimize=True)
+        dist2 = X_sq_norms[:, None] + center_sq_norms[None, :]
+        dist2 -= 2.0 * (X @ centers.T)
+        np.maximum(dist2, 0.0, out=dist2)
+        return dist2
+
+    def _cost_against_centers(self, X: np.ndarray, centers: np.ndarray) -> float:
+        X_sq_norms = self._squared_norms(X)
+        dist2 = self._squared_distances(X, X_sq_norms, centers)
+        return float(np.sum(np.min(dist2, axis=1)))
+
+    def _centers_from_state(self, d: int, k: int) -> np.ndarray:
+        assert self.state_ is not None
+        centers = np.zeros((k, d), dtype=np.float64)
+        counts = self.state_.count.astype(np.float64, copy=False)
+        valid = counts > 0
+        if np.any(valid):
+            centers[valid] = self.state_.sum_x[valid] / counts[valid, None]
+        return centers
+
+    def _update_state(self, Xb: np.ndarray, pred: np.ndarray, k: int) -> None:
+        assert self.state_ is not None
+        batch_count = np.bincount(pred, minlength=k).astype(np.int64, copy=False)
+        self.state_.count += batch_count
+        np.add.at(self.state_.sum_x, pred, Xb)
+
+    def _train_batches(
         self,
         batches: Iterable[np.ndarray],
         k: int,
         rng: np.random.Generator,
         labels_batches: Optional[Iterable[np.ndarray]] = None,
-    ) -> Result:
-        """
-        True streaming API: consumes an iterable of batches.
-
-        SSE policy (no flag, always computed):
-          - If batches is re-iterable => do a second pass and compute EXACT SSE vs final centers.
-          - If batches is single-pass (e.g., generator) => compute an ON-THE-FLY APPROX SSE
-            (against current lifted centers during training).
-        """
-        t0 = time.perf_counter()
-
-        single_pass = self._is_single_pass_iterable(batches)
+        compute_online_sse: bool = False,
+    ) -> tuple[int, int, float, list[float], list[np.ndarray], list[np.ndarray]]:
         labels_iter = iter(labels_batches) if labels_batches is not None else None
 
         total_points = 0
-        sse_online_approx = 0.0
-        all_true = []
-        all_pred = []
+        sse_online = 0.0
+        all_true: list[np.ndarray] = []
+        all_pred: list[np.ndarray] = []
+        batch_times: list[float] = []
 
         initialized = False
         d: Optional[int] = None
         r: Optional[int] = None
 
-        batch_times = []
-
-    # ---- First pass: train streaming kmeans and build lifting state ----
         for Xb in batches:
             if Xb is None or len(Xb) == 0:
                 continue
+
             Xb = np.asarray(Xb)
             if Xb.ndim != 2:
                 raise ValueError(f"Each batch must be 2D (n_batch, d). Got shape={Xb.shape}")
@@ -138,30 +152,16 @@ class Boutsidis_Streaming(Algo):
                 self.R_, self.km_, self.state_ = R, km, state
                 initialized = True
 
-            tb0 = time.perf_counter()  # ✅ start timing THIS batch update
+            tb0 = time.perf_counter()
 
-            # Project this batch: C_t = X_t R
-            Xr = Xb @ self.R_  # (b, r)
-
-            # Update k-means in reduced space
+            Xr = Xb @ self.R_
             self.km_.partial_fit(Xr)
-
-            # Assign labels using current model
             pred = self.km_.predict(Xr)
+            self._update_state(Xb, pred, k)
 
-            # Update original-space sufficient statistics (sum/count)
-            for j in range(k):
-                mask = (pred == j)
-                if np.any(mask):
-                    self.state_.sum_x[j] += Xb[mask].sum(axis=0)
-                    self.state_.count[j] += int(mask.sum())
-
-            # Always compute SOME SSE:
-            if single_pass:
+            if compute_online_sse:
                 centers_now = self._centers_from_state(d=d, k=k)
-                diff = Xb[:, None, :] - centers_now[None, :, :]
-                dist2 = np.sum(diff * diff, axis=2)
-                sse_online_approx += float(np.sum(np.min(dist2, axis=1)))
+                sse_online += self._cost_against_centers(Xb, centers_now)
 
             total_points += Xb.shape[0]
 
@@ -170,35 +170,134 @@ class Boutsidis_Streaming(Algo):
                 all_true.append(np.asarray(yb))
                 all_pred.append(pred.copy())
 
-            tb1 = time.perf_counter()   # ✅ end timing THIS batch update
+            tb1 = time.perf_counter()
             batch_times.append(tb1 - tb0)
 
-        if not initialized:
+        if not initialized or d is None or r is None:
             raise ValueError("No non-empty batches were provided.")
 
-        # Final centers in original space
+        return d, r, sse_online, batch_times, all_true, all_pred
+
+    def fit_batches(
+        self,
+        batches: Iterable[np.ndarray],
+        k: int,
+        rng: np.random.Generator,
+        labels_batches: Optional[Iterable[np.ndarray]] = None,
+    ) -> Result:
+        """
+        True streaming API: consumes an iterable of batches.
+
+        SSE policy:
+          - If batches is re-iterable => do a second pass and compute exact SSE vs final centers.
+          - If batches is single-pass => compute an online approximation against current lifted centers.
+        """
+        t0 = time.perf_counter()
+
+        single_pass = self._is_single_pass_iterable(batches)
+        d, r, sse_online, batch_times, all_true, all_pred = self._train_batches(
+            batches=batches,
+            k=k,
+            rng=rng,
+            labels_batches=labels_batches,
+            compute_online_sse=single_pass,
+        )
+
         centers_orig = self._centers_from_state(d=d, k=k)
-        
-        # ---- SSE computation ----
+
         if single_pass:
-            # Can't do exact SSE without seeing the stream again
-            cost_sse = float(sse_online_approx)
+            cost_sse = float(sse_online)
             cost_is_approx = True
         else:
-            # Second pass: exact SSE against final centers
             cost_sse = 0.0
-            for Xb in batches:  # re-iterate
+            for Xb in batches:
                 if Xb is None or len(Xb) == 0:
                     continue
                 Xb = np.asarray(Xb)
                 if Xb.ndim != 2:
                     raise ValueError(f"Each batch must be 2D (n_batch, d). Got shape={Xb.shape}")
-                diff = Xb[:, None, :] - centers_orig[None, :, :]
-                dist2 = np.sum(diff * diff, axis=2)
-                cost_sse += float(np.sum(np.min(dist2, axis=1)))
+                cost_sse += self._cost_against_centers(Xb, centers_orig)
             cost_is_approx = False
 
-        # Metrics: only if streamed labels provided (ARI/NMI computed for predictions collected in pass 1)
+        ari = None
+        nmi = None
+        if all_true:
+            y_true = np.concatenate(all_true, axis=0)
+            y_pred = np.concatenate(all_pred, axis=0)
+            ari = adjusted_rand_score(y_true, y_pred)
+            nmi = normalized_mutual_info_score(y_true, y_pred)
+
+        state_bytes = 0
+        if self.R_ is not None:
+            state_bytes += int(self.R_.nbytes)
+        if self.state_ is not None:
+            state_bytes += int(self.state_.sum_x.nbytes + self.state_.count.nbytes)
+        if self.km_ is not None and hasattr(self.km_, "cluster_centers_") and self.km_.cluster_centers_ is not None:
+            state_bytes += int(self.km_.cluster_centers_.nbytes)
+
+        avg_update_ms = float(np.mean(batch_times) * 1000.0) if batch_times else float("nan")
+        total_points = int(np.sum(self.state_.count)) if self.state_ is not None else 0
+
+        t1 = time.perf_counter()
+
+        return Result(
+            centers=centers_orig.astype(np.float32),
+            runtime_sec=t1 - t0,
+            memory=float(state_bytes),
+            cost_sse=float(cost_sse),
+            cost_ratio_vs_kmeans=float("nan"),
+            ari=ari,
+            nmi=nmi,
+            extra={
+                "mode": "streaming",
+                "eps": float(self.eps),
+                "c2": float(self.c2),
+                "chunk_size": int(self.chunk_size),
+                "d": int(d),
+                "r": int(r),
+                "points_seen": total_points,
+                "cost_is_approx": bool(cost_is_approx),
+                "stream_is_single_pass": bool(single_pass),
+                "avg_update_ms": float(avg_update_ms),
+            },
+        )
+
+    def fit(self, samples: np.ndarray, k: int, rng: np.random.Generator, labels=None) -> Result:
+        samples = np.asarray(samples)
+        if samples.ndim != 2:
+            raise ValueError(f"Samples must be 2D. Got shape={samples.shape}")
+
+        t0 = time.perf_counter()
+
+        def _batch_iter() -> Iterator[np.ndarray]:
+            n = samples.shape[0]
+            bs = max(1, self.chunk_size)
+            for i in range(0, n, bs):
+                yield samples[i:i + bs]
+
+        y_batches = None
+        if labels is not None:
+            labels = np.asarray(labels)
+
+            def _y_batch_iter() -> Iterator[np.ndarray]:
+                n = labels.shape[0]
+                bs = max(1, self.chunk_size)
+                for i in range(0, n, bs):
+                    yield labels[i:i + bs]
+
+            y_batches = _y_batch_iter()
+
+        d, r, _, batch_times, all_true, all_pred = self._train_batches(
+            batches=_batch_iter(),
+            k=k,
+            rng=rng,
+            labels_batches=y_batches,
+            compute_online_sse=False,
+        )
+
+        centers_orig = self._centers_from_state(d=d, k=k)
+        cost_sse = self._cost_against_centers(samples, centers_orig)
+
         ari = None
         nmi = None
         if all_true:
@@ -228,52 +327,15 @@ class Boutsidis_Streaming(Algo):
             ari=ari,
             nmi=nmi,
             extra={
-                "mode": "streaming",
+                "mode": "batch_stream_wrapper",
                 "eps": float(self.eps),
                 "c2": float(self.c2),
                 "chunk_size": int(self.chunk_size),
                 "d": int(d),
                 "r": int(r),
-                "points_seen": int(total_points),
-                "cost_is_approx": bool(cost_is_approx),
-                "stream_is_single_pass": bool(single_pass),
+                "points_seen": int(samples.shape[0]),
+                "cost_is_approx": False,
+                "stream_is_single_pass": False,
                 "avg_update_ms": float(avg_update_ms),
             },
         )
-
-    def fit(self, samples: np.ndarray, k: int, rng: np.random.Generator, labels=None) -> Result:
-        samples = np.asarray(samples)
-        if samples.ndim != 2:
-            raise ValueError(f"Samples must be 2D. Got shape={samples.shape}")
-
-        def _batch_iter() -> Iterator[np.ndarray]:
-            n = samples.shape[0]
-            bs = max(1, self.chunk_size)
-            for i in range(0, n, bs):
-                yield samples[i:i + bs]
-
-        y_batches = None
-        if labels is not None:
-            labels = np.asarray(labels)
-
-            def _y_batch_iter() -> Iterator[np.ndarray]:
-                n = labels.shape[0]
-                bs = max(1, self.chunk_size)
-                for i in range(0, n, bs):
-                    yield labels[i:i + bs]
-
-            y_batches = _y_batch_iter()
-
-        # Here batches are generated from an in-memory array, so we can just compute exact SSE directly
-        # after training (more reliable than relying on re-iterability heuristics).
-        res = self.fit_batches(_batch_iter(), k=k, rng=rng, labels_batches=y_batches)
-
-        # Override SSE with exact one-pass over full samples vs final centers (always exact here)
-        cost = kmeans_cost_sse(samples, res.centers.astype(np.float64))
-        res.cost_sse = float(cost)
-        if res.extra is None:
-            res.extra = {}
-        res.extra["mode"] = "batch_stream_wrapper"
-        res.extra["cost_is_approx"] = False
-        res.extra["stream_is_single_pass"] = False
-        return res
