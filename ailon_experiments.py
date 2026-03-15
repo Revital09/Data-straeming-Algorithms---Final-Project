@@ -1,8 +1,9 @@
-import numpy as np
-import os
 import json
+import os
+import numpy as np
 from sklearn.datasets import make_blobs
-from ailon_streaming import Ailon_Coreset
+
+from ailon_streaming_new import Ailon_Coreset
 
 
 def run_flat(algo, X, k, rng, labels=None):
@@ -12,33 +13,61 @@ def run_flat(algo, X, k, rng, labels=None):
 def merge_two_summaries(algo, X1, w1, X2, w2, k, rng):
     X_merge = np.vstack([X1, X2])
     w_merge = np.hstack([w1, w2])
+    sq_norms_merge = algo._squared_norms(X_merge)
 
     n_total = X_merge.shape[0]
     coreset_size = max(1, int(np.ceil(algo.coreset_factor * np.log(max(k, 2)))))
     reps = max(1, int(np.ceil(algo.repeat_factor * np.log(max(n_total, 2)))))
 
-    centers = algo._calculate_centers(X_merge, w_merge, k, rng, coreset_size, reps)
-    X_red, w_red = algo._induce_summary(X_merge, w_merge, centers)
+    centers = algo._calculate_centers(
+        samples=X_merge,
+        sample_sq_norms=sq_norms_merge,
+        w=w_merge,
+        k=k,
+        rng=rng,
+        coreset_size=coreset_size,
+        reps=reps,
+    )
+
+    X_red, w_red = algo._induce_summary(
+        samples=X_merge,
+        sample_sq_norms=sq_norms_merge,
+        w=w_merge,
+        centers=centers,
+    )
     return X_red, w_red
 
 
 def run_merge_reduce(algo, X, k, rng, labels=None):
-    n = X.shape[0]
-    w_full = np.ones(n, dtype=float)
-
-    coreset_size = max(1, int(np.ceil(algo.coreset_factor * np.log(max(k, 2)))))
-    reps = max(1, int(np.ceil(algo.repeat_factor * np.log(max(n, 2)))))
-
     summaries = []
 
-    for start in range(0, n, algo.chunk_size):
+    for start in range(0, X.shape[0], algo.chunk_size):
         block = X[start:start + algo.chunk_size]
-        w_block = w_full[start:start + algo.chunk_size]
+        block_sq_norms = algo._squared_norms(block)
+        w_block = np.ones(block.shape[0], dtype=float)
 
-        centers = algo._calculate_centers(block, w_block, k, rng, coreset_size, reps)
-        pts, wts = algo._induce_summary(block, w_block, centers)
+        coreset_size = max(1, int(np.ceil(algo.coreset_factor * np.log(max(k, 2)))))
+        reps = max(1, int(np.ceil(algo.repeat_factor * np.log(max(block.shape[0], 2)))))
+
+        centers = algo._calculate_centers(
+            samples=block,
+            sample_sq_norms=block_sq_norms,
+            w=w_block,
+            k=k,
+            rng=rng,
+            coreset_size=coreset_size,
+            reps=reps,
+        )
+
+        pts, wts = algo._induce_summary(
+            samples=block,
+            sample_sq_norms=block_sq_norms,
+            w=w_block,
+            centers=centers,
+        )
         summaries.append((pts, wts))
 
+    # two-stage merge-reduce:
     reduced = []
     i = 0
     while i < len(summaries):
@@ -47,7 +76,8 @@ def run_merge_reduce(algo, X, k, rng, labels=None):
                 algo,
                 summaries[i][0], summaries[i][1],
                 summaries[i + 1][0], summaries[i + 1][1],
-                k, rng
+                k,
+                rng,
             )
             reduced.append((X_red, w_red))
             i += 2
@@ -60,19 +90,18 @@ def run_merge_reduce(algo, X, k, rng, labels=None):
 
     centers_final = algo._kmeanspp_seed(summary_X, summary_w, k, rng)
 
-    from utils import assign_labels, kmeans_cost_sse
+    pred, cost = algo._assign_and_cost(X, centers_final)
+
+    ari = None
+    nmi = None
+    if labels is not None:
+        from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+        ari = adjusted_rand_score(labels, pred)
+        nmi = normalized_mutual_info_score(labels, pred)
+
+    memory = int(summary_X.nbytes + summary_w.nbytes)
+
     from results import Result
-    import time
-    from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
-
-    cost = kmeans_cost_sse(X, centers_final)
-    pred = assign_labels(X, centers_final)
-
-    ari = adjusted_rand_score(labels, pred) if labels is not None else None
-    nmi = normalized_mutual_info_score(labels, pred) if labels is not None else None
-
-    memory = summary_X.nbytes + summary_w.nbytes
-
     return Result(
         centers=centers_final,
         runtime_sec=np.nan,
@@ -145,12 +174,11 @@ def main():
     }
 
     json_path = os.path.join(output_dir, "merge_reduce_assumption_results.json")
-
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
     print(f"Results saved to: {json_path}")
 
-    
+
 if __name__ == "__main__":
     main()
