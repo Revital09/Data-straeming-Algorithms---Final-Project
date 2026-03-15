@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import os
-from dataclasses import asdict
 from typing import Dict, Any, List, Tuple
 
 import numpy as np
@@ -13,14 +12,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.datasets import make_blobs
 
-from boutsidis_streaming import _rademacher_projection_matrix
+from boutsidis_streaming_new import (
+    _rademacher_projection_matrix,
+    Boutsidis_Streaming,
+)
 
 
 # Helpers
 def choose_r(d: int, k: int, eps: float, c2: float, r_min: int = 10) -> int:
-    r = int(math.ceil(c2 * k / (eps ** 2)))
-    r = max(r_min, r)
-    return min(d, r)
+    algo = Boutsidis_Streaming(eps=eps, c2=c2, r_min=r_min)
+    return algo._choose_r(d, k)
 
 
 def sample_pairs(n: int, n_pairs: int, rng: np.random.Generator) -> np.ndarray:
@@ -222,14 +223,12 @@ def run_boutsidis_assumptions(
     n, d = X.shape
     r = choose_r(d=d, k=k, eps=eps, c2=c2, r_min=r_min)
 
-    # Experiment A
     rad_summary, rad_rows = experiment_rademacher_distribution(
         d=d,
         r=r,
         seeds=seeds,
     )
 
-    # Experiment B
     jl_summary, jl_rows, ratios, r_used = experiment_jl_distance_preservation(
         X=X,
         k=k,
@@ -279,7 +278,6 @@ def run_boutsidis_assumptions(
 
 
 def main():
-    # Example synthetic dataset
     X, y = make_blobs(
         n_samples=10000,
         centers=8,
@@ -292,7 +290,7 @@ def main():
     results = run_boutsidis_assumptions(
         X=X,
         k=8,
-        eps=0.8,    
+        eps=0.8,
         c2=8.0,
         r_min=2,
         output_dir="output_algorithms/boutsidis/boutsidis_assumptions",
