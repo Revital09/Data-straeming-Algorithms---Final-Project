@@ -1,0 +1,27 @@
+{
+  "config": {
+    "beta": 1.5,
+    "gamma": 0.25,
+    "chunk_size": 4092,
+    "seeds": [
+      42,
+      77,
+      211
+    ],
+    "base_n": 10000,
+    "d": 10,
+    "k": 8,
+    "progress_lb_n_init": 1,
+    "progress_lb_max_iter": 50,
+    "progress_lb_approx_factor": 2.0,
+    "max_stalled_phases": 8
+  },
+  "experiment_A": {
+    "mean_cost_ratio_vs_offline_kmeans": 1.0350094377837231,
+    "std_cost_ratio_vs_offline_kmeans": 0.0435182807446479
+  },
+  "experiment_C": {
+    "mean_weight_mass_error": 0.0,
+    "mean_weighted_vs_unweighted_cost_ratio": 0.9215830760151702
+  }
+}

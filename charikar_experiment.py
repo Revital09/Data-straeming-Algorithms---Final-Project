@@ -11,8 +11,8 @@ from sklearn.cluster import KMeans
 from sklearn.datasets import make_blobs
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
-from charikar_streaming import Charikar_KMeans
-from utils import weighted_kmeans_centers, assign_labels, kmeans_cost_sse
+from charikar_streaming_new import Charikar_KMeans, _weighted_kmeans_centers
+from utils import assign_labels, kmeans_cost_sse
 
 
 def ensure_dir(path: str) -> None:
@@ -83,6 +83,10 @@ def run_charikar_summary(
     chunk_size: int,
     n_init_final: int = 5,
     max_iter_final: int = 300,
+    progress_lb_n_init: int = 1,
+    progress_lb_max_iter: int = 50,
+    progress_lb_approx_factor: float = 2.0,
+    max_stalled_phases: int = 8,
 ) -> dict[str, Any]:
     rng = np.random.default_rng(seed)
 
@@ -92,6 +96,10 @@ def run_charikar_summary(
         chunk_size=chunk_size,
         n_init_final=n_init_final,
         max_iter_final=max_iter_final,
+        progress_lb_n_init=progress_lb_n_init,
+        progress_lb_max_iter=progress_lb_max_iter,
+        progress_lb_approx_factor=progress_lb_approx_factor,
+        max_stalled_phases=max_stalled_phases,
     )
 
     X = np.asarray(X, dtype=np.float64)
@@ -118,6 +126,22 @@ def run_charikar_summary(
         summary_X = Mi_X
         summary_w = Mi_w
 
+        next_raw_start = raw_start_idx + raw_consumed
+        if raw_consumed > 0:
+            raw_start_idx = next_raw_start
+
+        if raw_start_idx < n and summary_X is not None and summary_w is not None:
+            progress_lb = algo._phase_progress_lower_bound(
+                summary_X=summary_X,
+                summary_w=summary_w,
+                next_x=X[raw_start_idx],
+                k=k,
+                rng=rng,
+            )
+            L = max(algo.beta * L, progress_lb)
+        else:
+            L *= algo.beta
+
         if raw_consumed <= 0:
             x = X[raw_start_idx:raw_start_idx + 1]
             w = np.array([1.0], dtype=np.float64)
@@ -130,10 +154,7 @@ def run_charikar_summary(
                 summary_w = np.hstack([summary_w, w])
 
             raw_start_idx += 1
-        else:
-            raw_start_idx += raw_consumed
 
-        L *= algo.beta
         phase_id += 1
 
     assert summary_X is not None and summary_w is not None
@@ -168,7 +189,7 @@ def final_cluster_from_summary(
 
     if summary_X.shape[0] > k:
         if use_weights:
-            centers = weighted_kmeans_centers(
+            centers = _weighted_kmeans_centers(
                 summary_X,
                 summary_w,
                 k=k,
@@ -211,12 +232,22 @@ def experiment_a_approximation_proxy(
     gamma: float,
     chunk_size: int,
     seeds: tuple[int, ...] = (42, 77, 211),
+    progress_lb_n_init: int = 1,
+    progress_lb_max_iter: int = 50,
+    progress_lb_approx_factor: float = 2.0,
+    max_stalled_phases: int = 8,
 ) -> pd.DataFrame:
     ensure_dir(output_dir)
     rows = []
 
     for seed in seeds:
-        summary_info = run_charikar_summary(X, k, seed, beta, gamma, chunk_size)
+        summary_info = run_charikar_summary(
+            X, k, seed, beta, gamma, chunk_size,
+            progress_lb_n_init=progress_lb_n_init,
+            progress_lb_max_iter=progress_lb_max_iter,
+            progress_lb_approx_factor=progress_lb_approx_factor,
+            max_stalled_phases=max_stalled_phases,
+        )
 
         charikar_fit = final_cluster_from_summary(
             X_full=X,
@@ -260,13 +291,23 @@ def experiment_c_weighted_summary_validation(
     gamma: float,
     chunk_size: int,
     seeds: tuple[int, ...] = (42, 77, 211),
+    progress_lb_n_init: int = 1,
+    progress_lb_max_iter: int = 50,
+    progress_lb_approx_factor: float = 2.0,
+    max_stalled_phases: int = 8,
 ) -> pd.DataFrame:
     ensure_dir(output_dir)
     rows = []
     n = X.shape[0]
 
     for seed in seeds:
-        summary_info = run_charikar_summary(X, k, seed, beta, gamma, chunk_size)
+        summary_info = run_charikar_summary(
+            X, k, seed, beta, gamma, chunk_size,
+            progress_lb_n_init=progress_lb_n_init,
+            progress_lb_max_iter=progress_lb_max_iter,
+            progress_lb_approx_factor=progress_lb_approx_factor,
+            max_stalled_phases=max_stalled_phases,
+        )
 
         weighted_fit = final_cluster_from_summary(
             X_full=X,
@@ -321,6 +362,10 @@ def run_all_experiments(
     base_n: int = 10_000,
     d: int = 10,
     k: int = 8,
+    progress_lb_n_init: int = 1,
+    progress_lb_max_iter: int = 50,
+    progress_lb_approx_factor: float = 2.0,
+    max_stalled_phases: int = 8,
 ) -> dict[str, Any]:
     ensure_dir(output_dir)
 
@@ -335,6 +380,10 @@ def run_all_experiments(
         gamma=gamma,
         chunk_size=chunk_size,
         seeds=seeds,
+        progress_lb_n_init=progress_lb_n_init,
+        progress_lb_max_iter=progress_lb_max_iter,
+        progress_lb_approx_factor=progress_lb_approx_factor,
+        max_stalled_phases=max_stalled_phases,
     )
 
     df_c = experiment_c_weighted_summary_validation(
@@ -346,6 +395,10 @@ def run_all_experiments(
         gamma=gamma,
         chunk_size=chunk_size,
         seeds=seeds,
+        progress_lb_n_init=progress_lb_n_init,
+        progress_lb_max_iter=progress_lb_max_iter,
+        progress_lb_approx_factor=progress_lb_approx_factor,
+        max_stalled_phases=max_stalled_phases,
     )
 
     report = {
@@ -357,6 +410,10 @@ def run_all_experiments(
             "base_n": base_n,
             "d": d,
             "k": k,
+            "progress_lb_n_init": progress_lb_n_init,
+            "progress_lb_max_iter": progress_lb_max_iter,
+            "progress_lb_approx_factor": progress_lb_approx_factor,
+            "max_stalled_phases": max_stalled_phases,
         },
         "experiment_A": {
             "mean_cost_ratio_vs_offline_kmeans": float(df_a["cost_ratio_vs_offline_kmeans"].mean()),
@@ -384,6 +441,10 @@ def main() -> None:
         base_n=10_000,
         d=10,
         k=8,
+        progress_lb_n_init=1,
+        progress_lb_max_iter=50,
+        progress_lb_approx_factor=2.0,
+        max_stalled_phases=8,
     )
     print(json.dumps(report, indent=2))
 
