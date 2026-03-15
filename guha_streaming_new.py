@@ -6,7 +6,6 @@ import time
 import numpy as np
 
 
-# Avoid repeated slow physical-core detection inside scikit-learn/joblib on this machine.
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 from sklearn.cluster import KMeans

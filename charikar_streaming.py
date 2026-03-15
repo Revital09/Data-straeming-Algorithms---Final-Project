@@ -37,7 +37,6 @@ class _OnlineFLKMeansState:
         self.stopped: bool = False
         self.stop_reason: str | None = None
 
-        # rollback fields for the most recent processed point
         self._undo_prev_total_cost: float = 0.0
         self._undo_prev_processed: int = 0
         self._undo_prev_raw_read: int = 0
@@ -89,7 +88,7 @@ class _OnlineFLKMeansState:
             j = int(np.argmin(sq_dists))
             d2 = float(sq_dists[j])
 
-            # k-means adaptation of Meyerson/Charikar opening rule
+            # k-means adaptation
             p_open = min(1.0, (w * d2) / (self.facility_cost + 1e-12))
 
             if rng.random() < p_open:
@@ -121,12 +120,12 @@ class _OnlineFLKMeansState:
         self.processed_items = self._undo_prev_processed
         self.raw_points_read = self._undo_prev_raw_read
 
-        if self._undo_action == 1:  # opened a center
+        if self._undo_action == 1:  
             idx = self._undo_index
             self.counts[idx] = 0.0
             self.center_sq_norms[idx] = 0.0
             self.num_opened -= 1
-        elif self._undo_action == 2:  # assigned to existing center
+        elif self._undo_action == 2:  
             idx = self._undo_index
             self.counts[idx] = self._undo_prev_count
 
@@ -202,7 +201,7 @@ class Charikar_KMeans(Algo):
     ):
         logn = max(1.0, math.log(max(2, n)))
 
-        # Paper-style: 2 log n parallel runs
+        # 2 log n parallel runs
         num_runs = max(1, int(math.ceil(2.0 * logn)))
 
         facility_cost = Li / (k * (1.0 + logn) + 1e-12)
@@ -333,7 +332,6 @@ class Charikar_KMeans(Algo):
             if not st.stopped:
                 st.stop_reason = "end_of_stream"
 
-        # PLS-style winner: run that progressed the farthest
         winner = max(states, key=lambda s: s.processed_items)
         Mi_X, Mi_w = winner.snapshot()
 

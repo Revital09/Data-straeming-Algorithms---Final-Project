@@ -72,10 +72,7 @@ class Ailon_Coreset(Algo):
         cost = float(np.sum(dist2[np.arange(samples.shape[0]), assign]))
         return assign, cost
 
-    # ---------------------------------------------------
     # k-means++ seeding
-    # ---------------------------------------------------
-
     def _kmeanspp_seed(
         self,
         samples: np.ndarray,
@@ -107,10 +104,7 @@ class Ailon_Coreset(Algo):
 
         return centers
 
-    # ---------------------------------------------------
-    # k-means# (Algorithm 2 style)
-    # ---------------------------------------------------
-
+    # #k-means 
     def _kmeans_sharp(
         self,
         samples: np.ndarray,
@@ -149,10 +143,7 @@ class Ailon_Coreset(Algo):
         cost = float(np.dot(w, d2))
         return centers[:num_centers].copy(), cost
 
-    # ---------------------------------------------------
-    # repeat k-means# and keep best
-    # ---------------------------------------------------
-
+    # #repeat k-means and keep best
     def _calculate_centers(
         self,
         samples: np.ndarray,
@@ -183,10 +174,7 @@ class Ailon_Coreset(Algo):
 
         return best_centers
 
-    # ---------------------------------------------------
     # induce weighted summary
-    # ---------------------------------------------------
-
     def _induce_summary(
         self,
         samples: np.ndarray,
@@ -203,10 +191,7 @@ class Ailon_Coreset(Algo):
         mask = new_w > 0
         return centers[mask], new_w[mask]
 
-    # ---------------------------------------------------
     # FIT
-    # ---------------------------------------------------
-
     def fit(
         self,
         samples: np.ndarray,

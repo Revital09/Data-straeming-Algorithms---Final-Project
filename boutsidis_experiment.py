@@ -16,10 +16,7 @@ from sklearn.datasets import make_blobs
 from boutsidis_streaming import _rademacher_projection_matrix
 
 
-# ============================================================
 # Helpers
-# ============================================================
-
 def choose_r(d: int, k: int, eps: float, c2: float, r_min: int = 10) -> int:
     r = int(math.ceil(c2 * k / (eps ** 2)))
     r = max(r_min, r)
@@ -66,10 +63,7 @@ def pairwise_distortion_ratios(
     return ratios
 
 
-# ============================================================
 # Experiment A: Rademacher sanity check
-# ============================================================
-
 def experiment_rademacher_distribution(
     d: int,
     r: int,
@@ -132,10 +126,7 @@ def experiment_rademacher_distribution(
     return summary, rows
 
 
-# ============================================================
 # Experiment B: JL distance preservation
-# ============================================================
-
 def experiment_jl_distance_preservation(
     X: np.ndarray,
     k: int,
@@ -200,10 +191,6 @@ def experiment_jl_distance_preservation(
     return summary, rows, all_ratios_concat, r
 
 
-# ============================================================
-# Save outputs
-# ============================================================
-
 def save_histogram(ratios: np.ndarray, eps: float, output_path: str) -> None:
     plt.figure(figsize=(8, 6))
     plt.hist(ratios, bins=50)
@@ -218,10 +205,7 @@ def save_histogram(ratios: np.ndarray, eps: float, output_path: str) -> None:
     plt.close()
 
 
-# ============================================================
 # Main runner
-# ============================================================
-
 def run_boutsidis_assumptions(
     X: np.ndarray,
     k: int,
@@ -295,9 +279,7 @@ def run_boutsidis_assumptions(
 
 
 def main():
-    # --------------------------------------------------------
     # Example synthetic dataset
-    # --------------------------------------------------------
     X, y = make_blobs(
         n_samples=10000,
         centers=8,
@@ -310,7 +292,7 @@ def main():
     results = run_boutsidis_assumptions(
         X=X,
         k=8,
-        eps=0.8,     # עדיף כאן ערך יותר תיאורטי מאשר 1.5/2.5/3.5
+        eps=0.8,    
         c2=8.0,
         r_min=2,
         output_dir="output_algorithms/boutsidis/boutsidis_assumptions",

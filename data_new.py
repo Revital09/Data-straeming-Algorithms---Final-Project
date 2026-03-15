@@ -48,10 +48,7 @@ def make_datasets(rng: np.random.Generator, n: int = 30_000, d: int = 50, k_true
     )
     datasets["imbalanced"] = (X6.astype(np.float32), y6.astype(np.int32))
 
-    # ─────────────────────────
     # Real datasets
-    # ─────────────────────────
-
     scaler = StandardScaler()
 
     # Iris

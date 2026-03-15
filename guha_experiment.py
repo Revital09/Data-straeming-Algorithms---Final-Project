@@ -162,10 +162,6 @@ def save_summary_and_plots(
 
 
 # Experiment 1: Scalability with stream size
-# Theoretical claim checked:
-# larger streams should increase runtime, while memory grows slowly
-# because STREAM stores summaries rather than the full dataset.
-
 def experiment_stream_size(
     output_dir: str,
     n_values=(5_000, 10_000, 25_000, 50_000, 100_000),
@@ -214,7 +210,7 @@ def main():
     base_output_dir = "output_algorithms/guha/guha_assumption"
     os.makedirs(base_output_dir, exist_ok=True)
 
-    # 1) Check scalability with stream size
+    # Check scalability with stream size
     experiment_stream_size(
         output_dir=os.path.join(base_output_dir, "stream_size"),
         n_values=(5_000, 10_000, 25_000, 50_000, 100_000),

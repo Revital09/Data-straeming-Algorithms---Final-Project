@@ -37,10 +37,7 @@ class Ailon_Coreset(Algo):
         self.coreset_factor = coreset_factor
         self.repeat_factor = repeat_factor
 
-    # ---------------------------------------------------
     # k-means++ seeding
-    # ---------------------------------------------------
-
     def _kmeanspp_seed(
         self,
         samples: np.ndarray,
@@ -69,10 +66,7 @@ class Ailon_Coreset(Algo):
 
         return np.array(centers)
 
-    # ---------------------------------------------------
     # k-means# (Algorithm 2 style)
-    # ---------------------------------------------------
-
     def _kmeans_sharp(
         self,
         samples: np.ndarray,
@@ -104,10 +98,7 @@ class Ailon_Coreset(Algo):
 
         return centers
 
-    # ---------------------------------------------------
     # repeat k-means# and keep best
-    # ---------------------------------------------------
-
     def _calculate_centers(
         self,
         samples: np.ndarray,
@@ -134,10 +125,7 @@ class Ailon_Coreset(Algo):
 
         return best_centers
 
-    # ---------------------------------------------------
     # induce weighted summary
-    # ---------------------------------------------------
-
     def _induce_summary(
         self,
         samples: np.ndarray,
@@ -155,10 +143,7 @@ class Ailon_Coreset(Algo):
         mask = new_w > 0
         return centers[mask], new_w[mask]
 
-    # ---------------------------------------------------
     # FIT
-    # ---------------------------------------------------
-
     def fit(
         self,
         samples: np.ndarray,

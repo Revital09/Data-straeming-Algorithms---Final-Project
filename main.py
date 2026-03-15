@@ -106,7 +106,7 @@ def run_with_measurements(algo: Algo, X: np.ndarray, y: np.ndarray | None, k: in
     if res.extra is None:
         res.extra = {}
 
-    # store peak memory bytes (python allocations)
+    # store peak memory bytes
     res.extra["peak_mem_bytes"] = int(peak)
 
     # ensure points_seen exists for throughput

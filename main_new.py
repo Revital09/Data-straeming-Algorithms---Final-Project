@@ -105,7 +105,7 @@ def run_with_measurements(algo: Algo, X: np.ndarray, y: np.ndarray | None, k: in
     if res.extra is None:
         res.extra = {}
 
-    # store peak memory bytes (python allocations)
+    # store peak memory bytes 
     res.extra["peak_mem_bytes"] = int(peak)
 
     # ensure points_seen exists for throughput
@@ -439,7 +439,6 @@ def main():
     agg_rows = aggregate_rows(raw_rows)
     summary_rows = build_summary_overall(raw_rows)
 
-    # Truncate numeric values to 5 decimals in all CSVs (no rounding)
     raw_rows_out = truncate_numeric_in_rows(raw_rows, decimals=5)
     agg_rows_out = truncate_numeric_in_rows(agg_rows, decimals=5)
     summary_rows_out = truncate_numeric_in_rows(summary_rows, decimals=5)
