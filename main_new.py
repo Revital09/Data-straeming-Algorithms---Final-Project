@@ -29,10 +29,6 @@ SYNTHETIC_SETUPS = [
 SYNTHETIC_DATASET_NAMES = ["blobs", "anisotropic", "high_dim_sparseish"]
 REAL_DATASET_NAMES = ["real_iris", "real_covertype", "real_mnist_pca50"]
 
-ENABLE_CHARIKAR_16 = True
-
-# HELPERS
-
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
@@ -135,6 +131,7 @@ def run_one_dataset_once(X: np.ndarray, y: np.ndarray | None, k: int, seed: int,
         res = run_with_measurements(algo, X, y, k, rng)
         res.cost_ratio_vs_kmeans = res.cost_sse / (kmeans_cost + 1e-12)
         results[algo.name] = res
+        print(f"Completed algo={algo.name} runtime_sec={res.runtime_sec:.5f}, peak_mem_bytes={res.extra['peak_mem_bytes']}")
 
     return results
 
@@ -203,7 +200,6 @@ def main():
 
         for dataset_name, (X, y) in synthetic_datasets.items():
             for seed in SEEDS:
-                print(f"Running synthetic | dataset={dataset_name} | n={n} d={d} k={k} | seed={seed}")
                 results = run_one_dataset_once(X, y, k=k, seed=seed, algorithms=algorithms)
 
                 for algo_name, res in results.items():

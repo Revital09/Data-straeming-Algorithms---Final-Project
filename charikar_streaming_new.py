@@ -1,24 +1,55 @@
 from __future__ import annotations
-import time
+
 import math
+import time
 
 import numpy as np
+
+from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 from results import Algo, Result
-from utils import weighted_kmeans_centers, assign_labels, kmeans_cost_sse
+
+
+def _weighted_kmeans_centers(
+    X: np.ndarray,
+    w: np.ndarray,
+    k: int,
+    rng: np.random.Generator,
+    n_init: int = 5,
+    max_iter: int = 300,
+) -> np.ndarray:
+    km = KMeans(
+        n_clusters=k,
+        n_init=n_init,
+        max_iter=max_iter,
+        random_state=int(rng.integers(1, 1_000_000)),
+    )
+    km.fit(X, sample_weight=w)
+    return km.cluster_centers_
 
 
 class _OnlineFLKMeansState:
-    """
-    One ONLINE-FL-style run adapted to k-means.
-
-    Optimizations:
-    - preallocated center/count buffers
-    - cached center squared norms
-    - rollback only the last local update
-    - no per-point vstack/list copying
-    """
+    __slots__ = (
+        "facility_cost",
+        "d",
+        "max_centers",
+        "centers",
+        "center_sq_norms",
+        "counts",
+        "total_cost",
+        "num_opened",
+        "processed_items",
+        "raw_points_read",
+        "stopped",
+        "stop_reason",
+        "_undo_prev_total_cost",
+        "_undo_prev_processed",
+        "_undo_prev_raw_read",
+        "_undo_action",
+        "_undo_index",
+        "_undo_prev_count",
+    )
 
     def __init__(self, facility_cost: float, d: int, max_centers: int):
         self.facility_cost = float(facility_cost)
@@ -29,33 +60,29 @@ class _OnlineFLKMeansState:
         self.center_sq_norms = np.zeros(max_centers, dtype=np.float64)
         self.counts = np.zeros(max_centers, dtype=np.float64)
 
-        self.total_cost: float = 0.0
-        self.num_opened: int = 0
-        self.processed_items: int = 0
-        self.raw_points_read: int = 0
+        self.total_cost = 0.0
+        self.num_opened = 0
+        self.processed_items = 0
+        self.raw_points_read = 0
 
-        self.stopped: bool = False
+        self.stopped = False
         self.stop_reason: str | None = None
 
-        # rollback fields for the most recent processed point
-        self._undo_prev_total_cost: float = 0.0
-        self._undo_prev_processed: int = 0
-        self._undo_prev_raw_read: int = 0
-        self._undo_action: int = 0   # 0=none, 1=open, 2=assign
-        self._undo_index: int = -1
-        self._undo_prev_count: float = 0.0
+        self._undo_prev_total_cost = 0.0
+        self._undo_prev_processed = 0
+        self._undo_prev_raw_read = 0
+        self._undo_action = 0
+        self._undo_index = -1
+        self._undo_prev_count = 0.0
 
     def process_point(
         self,
         x: np.ndarray,
+        x_norm2: float,
         w: float,
         is_raw: bool,
         rng: np.random.Generator,
     ) -> None:
-        """
-        Process one weighted point.
-        Save only enough information to undo the last local update.
-        """
         w = float(w)
 
         self._undo_prev_total_cost = self.total_cost
@@ -65,47 +92,35 @@ class _OnlineFLKMeansState:
         self._undo_index = -1
         self._undo_prev_count = 0.0
 
-        if self.num_opened == 0:
-            idx = 0
-            self.centers[idx] = x
-            self.center_sq_norms[idx] = float(np.dot(x, x))
-            self.counts[idx] = w
+        num_opened = self.num_opened
+        if num_opened == 0:
+            self.centers[0] = x
+            self.center_sq_norms[0] = x_norm2
+            self.counts[0] = w
             self.num_opened = 1
-
             self._undo_action = 1
-            self._undo_index = idx
+            self._undo_index = 0
         else:
-            active_centers = self.centers[:self.num_opened]
-            x_norm2 = float(np.dot(x, x))
-
-            # ||c-x||^2 = ||c||^2 + ||x||^2 - 2<c,x>
-            sq_dists = (
-                self.center_sq_norms[:self.num_opened]
-                + x_norm2
-                - 2.0 * (active_centers @ x)
-            )
-            sq_dists = np.maximum(sq_dists, 0.0)
+            active_centers = self.centers[:num_opened]
+            sq_dists = self.center_sq_norms[:num_opened] + x_norm2 - 2.0 * (active_centers @ x)
+            np.maximum(sq_dists, 0.0, out=sq_dists)
 
             j = int(np.argmin(sq_dists))
             d2 = float(sq_dists[j])
+            p_open = (w * d2) / (self.facility_cost + 1e-12)
 
-            # k-means adaptation of Meyerson/Charikar opening rule
-            p_open = min(1.0, (w * d2) / (self.facility_cost + 1e-12))
-
-            if rng.random() < p_open:
-                idx = self.num_opened
+            if p_open >= 1.0 or rng.random() < p_open:
+                idx = num_opened
                 self.centers[idx] = x
                 self.center_sq_norms[idx] = x_norm2
                 self.counts[idx] = w
-                self.num_opened += 1
-
+                self.num_opened = num_opened + 1
                 self._undo_action = 1
                 self._undo_index = idx
             else:
                 self._undo_action = 2
                 self._undo_index = j
                 self._undo_prev_count = float(self.counts[j])
-
                 self.counts[j] += w
                 self.total_cost += w * d2
 
@@ -114,19 +129,16 @@ class _OnlineFLKMeansState:
             self.raw_points_read += 1
 
     def rollback_last(self) -> None:
-        """
-        Undo only the most recent processed point.
-        """
         self.total_cost = self._undo_prev_total_cost
         self.processed_items = self._undo_prev_processed
         self.raw_points_read = self._undo_prev_raw_read
 
-        if self._undo_action == 1:  # opened a center
+        if self._undo_action == 1:
             idx = self._undo_index
             self.counts[idx] = 0.0
             self.center_sq_norms[idx] = 0.0
             self.num_opened -= 1
-        elif self._undo_action == 2:  # assigned to existing center
+        elif self._undo_action == 2:
             idx = self._undo_index
             self.counts[idx] = self._undo_prev_count
 
@@ -137,28 +149,13 @@ class _OnlineFLKMeansState:
     def snapshot(self) -> tuple[np.ndarray, np.ndarray]:
         if self.num_opened == 0:
             raise RuntimeError("Invocation has no centers.")
-        C = self.centers[:self.num_opened].copy()
-        w = self.counts[:self.num_opened].copy()
-        return C, w
+        return (
+            self.centers[:self.num_opened].copy(),
+            self.counts[:self.num_opened].copy(),
+        )
 
 
 class Charikar_KMeans(Algo):
-    """
-    Charikar-inspired PLS skeleton adapted to k-means.
-
-    Paper-like structure:
-    - SET-LB-style lower bound initialization
-    - repeated phases
-    - ~2 log n parallel ONLINE-FL runs per phase
-    - next phase gets Mi || unread suffix
-    - no extra summary reduction inside phases
-
-    Practical adaptations:
-    - squared-distance opening rule for k-means
-    - final weighted k-means on the phase summary
-    - raw points are processed in chunk loops inside fit()
-    """
-
     name = "[Charikar2003] PLS KMeans"
 
     def __init__(
@@ -175,22 +172,40 @@ class Charikar_KMeans(Algo):
         self.n_init_final = int(n_init_final)
         self.max_iter_final = int(max_iter_final)
 
+    @staticmethod
+    def _squared_norms(X: np.ndarray) -> np.ndarray:
+        return np.einsum("ij,ij->i", X, X, optimize=True)
+
+    @staticmethod
+    def _squared_distances(
+        X: np.ndarray,
+        X_sq_norms: np.ndarray,
+        centers: np.ndarray,
+    ) -> np.ndarray:
+        center_sq_norms = np.einsum("ij,ij->i", centers, centers, optimize=True)
+        dist2 = X_sq_norms[:, None] + center_sq_norms[None, :]
+        dist2 -= 2.0 * (X @ centers.T)
+        np.maximum(dist2, 0.0, out=dist2)
+        return dist2
+
+    def _assign_and_cost(self, X: np.ndarray, centers: np.ndarray) -> tuple[np.ndarray, float]:
+        X_sq_norms = self._squared_norms(X)
+        dist2 = self._squared_distances(X, X_sq_norms, centers)
+        pred = np.argmin(dist2, axis=1)
+        cost = float(np.sum(dist2[np.arange(X.shape[0]), pred]))
+        return pred, cost
+
     def _set_lb_kmeans(self, X: np.ndarray, k: int) -> float:
-        """
-        PLS-style lower bound initialization adapted to k-means:
-        minimum squared pairwise distance among the first k+1 points.
-        """
         m = min(X.shape[0], k + 1)
         if m <= 1:
             return 1.0
 
         Y = X[:m]
-        diff = Y[:, None, :] - Y[None, :, :]
-        d2 = np.einsum("ijk,ijk->ij", diff, diff, optimize=True)
+        y_sq = self._squared_norms(Y)
+        d2 = y_sq[:, None] + y_sq[None, :] - 2.0 * (Y @ Y.T)
+        np.maximum(d2, 0.0, out=d2)
         np.fill_diagonal(d2, np.inf)
-
-        lb = float(np.min(d2))
-        return max(lb, 1e-12)
+        return max(float(np.min(d2)), 1e-12)
 
     def _init_phase_states(
         self,
@@ -201,91 +216,61 @@ class Charikar_KMeans(Algo):
         rng: np.random.Generator,
     ):
         logn = max(1.0, math.log(max(2, n)))
-
-        # Paper-style: 2 log n parallel runs
         num_runs = max(1, int(math.ceil(2.0 * logn)))
 
         facility_cost = Li / (k * (1.0 + logn) + 1e-12)
-
         median_limit = int(math.ceil(
             4.0 * k * (1.0 + logn) * (1.0 + 4.0 * (self.gamma + self.beta))
         ))
         cost_limit = 4.0 * Li * (1.0 + 4.0 * (self.gamma + self.beta))
-
-        # allow one extra temporary opening before rollback
         max_centers = max(1, median_limit + 1)
 
         states = [
-            _OnlineFLKMeansState(
-                facility_cost=facility_cost,
-                d=d,
-                max_centers=max_centers,
-            )
+            _OnlineFLKMeansState(facility_cost=facility_cost, d=d, max_centers=max_centers)
             for _ in range(num_runs)
         ]
-
         run_seeds = rng.integers(0, 2**32 - 1, size=num_runs, dtype=np.uint64)
-        run_rngs = [np.random.default_rng(int(s)) for s in run_seeds]
+        run_rngs = [np.random.default_rng(int(seed)) for seed in run_seeds]
 
         return states, run_rngs, facility_cost, median_limit, cost_limit, num_runs
 
-    def _feed_summary_to_states(
+    def _feed_points_to_states(
         self,
-        states: list[_OnlineFLKMeansState],
-        run_rngs: list[np.random.Generator],
-        summary_X: np.ndarray,
-        summary_w: np.ndarray,
+        active_states: list[_OnlineFLKMeansState],
+        active_rngs: list[np.random.Generator],
+        points: np.ndarray,
+        weights: np.ndarray,
+        is_raw: bool,
         median_limit: int,
         cost_limit: float,
-    ) -> None:
-        m = summary_X.shape[0]
-        for i in range(m):
-            any_active = False
-            x = summary_X[i]
-            w = float(summary_w[i])
+    ) -> tuple[list[_OnlineFLKMeansState], list[np.random.Generator]]:
+        for i in range(points.shape[0]):
+            if not active_states:
+                break
 
-            for st, rrng in zip(states, run_rngs):
-                if st.stopped:
-                    continue
-                any_active = True
+            x = points[i]
+            x_norm2 = float(np.dot(x, x))
+            w = float(weights[i])
 
-                st.process_point(x=x, w=w, is_raw=False, rng=rrng)
+            next_states: list[_OnlineFLKMeansState] = []
+            next_rngs: list[np.random.Generator] = []
 
+            for st, rrng in zip(active_states, active_rngs):
+                st.process_point(x=x, x_norm2=x_norm2, w=w, is_raw=is_raw, rng=rrng)
                 overflow = (st.num_opened > median_limit) or (st.total_cost > cost_limit)
                 if overflow:
                     st.rollback_last()
                     st.stopped = True
                     st.stop_reason = "threshold_exceeded"
-
-            if not any_active:
-                break
-
-    def _feed_raw_chunk_to_states(
-        self,
-        states: list[_OnlineFLKMeansState],
-        run_rngs: list[np.random.Generator],
-        chunk: np.ndarray,
-        median_limit: int,
-        cost_limit: float,
-    ) -> None:
-        for x in chunk:
-            any_active = False
-
-            for st, rrng in zip(states, run_rngs):
-                if st.stopped:
                     continue
-                any_active = True
 
-                st.process_point(x=x, w=1.0, is_raw=True, rng=rrng)
+                next_states.append(st)
+                next_rngs.append(rrng)
 
-                overflow = (st.num_opened > median_limit) or (st.total_cost > cost_limit)
-                if overflow:
-                    st.rollback_last()
-                    st.stopped = True
-                    st.stop_reason = "threshold_exceeded"
+            active_states = next_states
+            active_rngs = next_rngs
 
-            if not any_active:
-                break
+        return active_states, active_rngs
 
     def _run_one_phase_chunked(
         self,
@@ -300,40 +285,48 @@ class Charikar_KMeans(Algo):
         n, d = X.shape
 
         states, run_rngs, facility_cost, median_limit, cost_limit, num_runs = self._init_phase_states(
-            Li=Li, k=k, n=n, d=d, rng=rng
+            Li=Li,
+            k=k,
+            n=n,
+            d=d,
+            rng=rng,
         )
 
-        # Feed carried summary Mi first
+        active_states = states[:]
+        active_rngs = run_rngs[:]
+
         if summary_X is not None and summary_w is not None and summary_X.shape[0] > 0:
-            self._feed_summary_to_states(
-                states=states,
-                run_rngs=run_rngs,
-                summary_X=summary_X,
-                summary_w=summary_w,
+            active_states, active_rngs = self._feed_points_to_states(
+                active_states=active_states,
+                active_rngs=active_rngs,
+                points=summary_X,
+                weights=summary_w,
+                is_raw=False,
                 median_limit=median_limit,
                 cost_limit=cost_limit,
             )
 
-        # Then unread raw stream in chunks
         for start in range(raw_start_idx, n, self.chunk_size):
             stop = min(start + self.chunk_size, n)
+            chunk = X[start:stop]
+            chunk_w = np.ones(chunk.shape[0], dtype=np.float64)
 
-            self._feed_raw_chunk_to_states(
-                states=states,
-                run_rngs=run_rngs,
-                chunk=X[start:stop],
+            active_states, active_rngs = self._feed_points_to_states(
+                active_states=active_states,
+                active_rngs=active_rngs,
+                points=chunk,
+                weights=chunk_w,
+                is_raw=True,
                 median_limit=median_limit,
                 cost_limit=cost_limit,
             )
 
-            if all(st.stopped for st in states):
+            if not active_states:
                 break
 
-        for st in states:
-            if not st.stopped:
-                st.stop_reason = "end_of_stream"
+        for st in active_states:
+            st.stop_reason = "end_of_stream"
 
-        # PLS-style winner: run that progressed the farthest
         winner = max(states, key=lambda s: s.processed_items)
         Mi_X, Mi_w = winner.snapshot()
 
@@ -362,7 +355,6 @@ class Charikar_KMeans(Algo):
         if self.chunk_size <= 0:
             raise ValueError("chunk_size must be positive.")
 
-        # PLS-style initialization
         L = self._set_lb_kmeans(X, k) / self.beta
 
         raw_start_idx = 0
@@ -397,12 +389,10 @@ class Charikar_KMeans(Algo):
                 }
             )
 
-            # Xi+1 = Mi || unread suffix
             summary_X = Mi_X
             summary_w = Mi_w
 
             if raw_consumed <= 0:
-                # safety against deadlock
                 x = X[raw_start_idx:raw_start_idx + 1]
                 w = np.array([1.0], dtype=np.float64)
 
@@ -425,9 +415,8 @@ class Charikar_KMeans(Algo):
         Csum = summary_X.astype(np.float64, copy=False)
         Wsum = summary_w.astype(np.float64, copy=False)
 
-        # Final weighted k-means on the final PLS summary
         if Csum.shape[0] > k:
-            centers_final = weighted_kmeans_centers(
+            centers_final = _weighted_kmeans_centers(
                 Csum,
                 Wsum,
                 k=k,
@@ -441,14 +430,12 @@ class Charikar_KMeans(Algo):
             extra_idx = rng.integers(0, Csum.shape[0], size=k - Csum.shape[0])
             centers_final = np.vstack([Csum, Csum[extra_idx]])
 
-        t1 = time.perf_counter()
-
-        cost = float(kmeans_cost_sse(X, centers_final))
-        pred = assign_labels(X, centers_final)
+        pred, cost = self._assign_and_cost(X, centers_final)
 
         ari = adjusted_rand_score(y, pred) if y is not None else None
         nmi = normalized_mutual_info_score(y, pred) if y is not None else None
 
+        t1 = time.perf_counter()
         state_bytes = int(Csum.nbytes + Wsum.nbytes)
 
         return Result(
