@@ -248,7 +248,7 @@ def experiment_m_factor(
 
 
 def main():
-    base_output_dir = "output_algorithms/guha/guha_assumption"
+    base_output_dir = "output_assumptions/guha_assumption"
     os.makedirs(base_output_dir, exist_ok=True)
 
     experiment_stream_size(

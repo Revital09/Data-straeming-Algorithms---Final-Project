@@ -153,7 +153,7 @@ def main():
     print("nmi:", mr_res.nmi)
     print("summary_size:", mr_res.extra["summary_size"])
 
-    output_dir = "output_algorithms/ailon/ailon_assumption"
+    output_dir = "output_assumptions/ailon_assumption"
     os.makedirs(output_dir, exist_ok=True)
 
     results = {

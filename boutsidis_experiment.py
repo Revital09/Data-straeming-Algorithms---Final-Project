@@ -293,7 +293,7 @@ def main():
         eps=0.8,
         c2=8.0,
         r_min=2,
-        output_dir="output_algorithms/boutsidis/boutsidis_assumptions",
+        output_dir="output_assumptions/boutsidis_assumptions",
         seeds=(42, 77, 211),
         n_pairs=5000,
     )

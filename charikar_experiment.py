@@ -433,7 +433,7 @@ def run_all_experiments(
 
 def main() -> None:
     report = run_all_experiments(
-        output_dir="output_algorithms/charikar/charikar_assumption",
+        output_dir="output_assumptions/charikar_assumption",
         beta=1.5,
         gamma=0.25,
         chunk_size=4092,
