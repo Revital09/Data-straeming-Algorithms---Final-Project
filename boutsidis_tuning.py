@@ -173,7 +173,7 @@ def main():
         samples=X,
         k=8,
         r_min=2,
-        output_dir="output_algorithms/boutsidis/boutsidis_tuning",
+        output_dir="output_tuned/boutsidis_tuning",
         labels=y,
         eps_values = (1.5, 2.5, 3.5),
         c2_values = (1.0, 2.0, 3.0),

@@ -164,7 +164,7 @@ def main():
     best_df = tune_guha_parameters(
         samples=X,
         k=14,
-        output_dir="output_algorithms/guha/guha_tuning",
+        output_dir="output_tuned/guha_tuning",
         labels=y,
         chunk_size=4096,
         m_factor_values=(1.0, 2.0, 3.0, 4.0, 5.0),
