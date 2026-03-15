@@ -14,7 +14,7 @@ from utils import set_seed
 from data_new2 import make_real_datasets, make_synthetic_datasets
 
 
-OUTPUT_DIR = "results_new"
+OUTPUT_DIR = "results_final"
 SWEEP_ID = "Kmeans_sweep"
 
 STREAM_MODEL = "insertion-only"
